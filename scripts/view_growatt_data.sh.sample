@@ -1,0 +1,378 @@
+#!/bin/sh
+#-------------------------------------------------------------------------
+# Name      : view_growatt_data.sh
+#
+# Function  : Read Growatt Wifi Adapter records and show all contents
+#
+# Date      : 09-07-2015
+# Author    : Sander Plug
+#
+# Version   : 2.3 Added support for Growatt Wifi Module 3.0.0.0 firmware.
+#             2.2 Not released
+#             2.1 Initial version
+#
+#-------------------------------------------------------------------------
+
+# Uncomment to have debugging information
+# set -x
+
+#-------------------------------------------------------------------------
+# Declaration of user variables
+#-------------------------------------------------------------------------
+GROWATTSERIAL="<your Growatt inverter serial number>"
+GROWATTMODULEVER=1.0.0.0
+
+#-------------------------------------------------------------------------
+# Declaration of script variables
+#-------------------------------------------------------------------------
+PVBASEDIR=/home/pvoutput
+PVINDIR=$PVBASEDIR/input
+PVOUTDIR=$PVBASEDIR/processed
+PVCAPFILE="growatt_*.cap"
+LOWERLIMIT=300
+UPPERLIMIT=700
+DIVIDER="------------------------------------"
+fn=$1
+
+#-------------------------------------------------------------------------
+# Check if the file exists
+#-------------------------------------------------------------------------
+if [ ! -f "$fn" ]; then
+	printf "\nERROR: The file \"%s\" can not be found...\n\n" $fn
+	printf "Usage: %s <Growatt tcpdump file>\n\n" $0
+        exit 0
+fi
+
+#-------------------------------------------------------------------------
+# Function to calculate register position based on $OFFSET and parameter.
+# There are different Growatt Wifi Module firmware versions.
+# The difference between the positions of the position of GROWATTSERIAL
+# and the position of the data is +6 positions when 2.0.0.0 firmware or
+# 3.0.0.0 firmware is # used (compared to 1.0.0.0 firmware).
+#-------------------------------------------------------------------------
+calcpos()
+{
+	case "$GROWATTMODULEVER" in
+	"1.0.0.0")
+		OFFSETCORRECT=0
+	;;
+	"2.0.0.0")
+		OFFSETCORRECT=6
+	;;
+	"3.0.0.0")
+		OFFSETCORRECT=6
+	;;
+	esac
+
+	echo $(echo $OFFSET + $1 + $OFFSETCORRECT | bc)
+}
+
+#-------------------------------------------------------------------------
+# Print header
+#-------------------------------------------------------------------------
+printf "%87s\n" | tr ' ' -
+date 
+printf "%87s\n" | tr ' ' -
+
+#-------------------------------------------------------------------------
+# Determine if the captured record has the desired length
+#-------------------------------------------------------------------------
+fs=$(stat --format=%s $fn)
+
+if [ "$fs" -gt $LOWERLIMIT -a "$fs" -lt $UPPERLIMIT ]; then
+
+	#-------------------------------------------------------------------------
+	# Use $GROWATTSERIAL to find the reference point to be used as offset
+	#-------------------------------------------------------------------------
+	OFFSET=$(grep -obUaP \
+	       $(echo -n "$GROWATTSERIAL" | od -A n -t x1 | sed "s/ /\\\x/g") $fn \
+		| cut -d ":" -f 1)
+
+        if [ "$OFFSET" = "" ];
+        then
+		#-------------------------------------------------------------------------
+		# Write error message if the file is of an incorrect length
+		#-------------------------------------------------------------------------
+		printf "\nERROR: Growatt serial number %s not found in datarecord.\n\n" \
+                        $GROWATTSERIAL 
+                exit 0
+        fi
+
+	#-------------------------------------------------------------------------
+	# Fill the variables for Date (fd) and Time (ft)
+	#-------------------------------------------------------------------------
+	
+        fd=$(echo $fn | cut -d_ -f2)
+        ft=$(echo $fn | cut -d_ -f3 | cut -c1-5)
+
+        #-------------------------------------------------------------------------
+        # Extract Growatt Inverter and Adapter serial numbers
+        #-------------------------------------------------------------------------
+        cs=$(hexdump -C -s ${OFFSET}                   -n 10 $fn | cut -d "|" -f 2 | head -1)
+        ah=$(hexdump -C -s $(echo ${OFFSET} -10 | bc)  -n 10 $fn | cut -d "|" -f 2 | head -1)
+
+        #-------------------------------------------------------------------------
+        # Extract Growatt Inverter information
+        #-------------------------------------------------------------------------
+
+        # Inverter Status (0: waiting, 1: normal, 2:fault)
+        InvStatt=$(hexdump -C -s $(calcpos 15) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        InvStat=$(echo "ibase=16;obase=A;scale=1;$InvStatt" | bc)
+
+		case $InvStat in
+			0) InvStattxt="waiting" ;;
+			1) InvStattxt="normal" ;;
+			2) InvStattxt="fault" ;;
+		esac
+
+        # Ppv(W)
+        Ppvt=$(hexdump -C -s $(calcpos 17) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Ppv=$(echo "ibase=16;obase=A;scale=1;$Ppvt/A" | bc)
+
+        # Vpv1(V)
+        Vpv1t=$(hexdump -C -s $(calcpos 21) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vpv1=$(echo "ibase=16;obase=A;scale=1;$Vpv1t/A" | bc)
+
+        # Ipv1(A)
+        Ipv1t=$(hexdump -C -s $(calcpos 23) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Ipv1=$(echo "ibase=16;obase=A;scale=1;$Ipv1t/A" | bc)
+
+        # Ppv1(W)
+        Ppv1t=$(hexdump -C -s $(calcpos 25) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Ppv1=$(echo "ibase=16;obase=A;scale=1;$Ppv1t/A" | bc)
+
+        # Vpv2(V)
+        Vpv2t=$(hexdump -C -s $(calcpos 29) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vpv2=$(echo "ibase=16;obase=A;scale=1;$Vpv2t/A" | bc)
+
+        # Ipv2(A)
+        Ipv2t=$(hexdump -C -s $(calcpos 31) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Ipv2=$(echo "ibase=16;obase=A;scale=1;$Ipv2t/A" | bc)
+
+        # Ppv2(W)
+        Ppv2t=$(hexdump -C -s $(calcpos 33) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Ppv2=$(echo "ibase=16;obase=A;scale=1;$Ppv2t/A" | bc)
+
+        # Pac(W)
+        Pact=$(hexdump -C -s $(calcpos 37) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Pac=$(echo "ibase=16;obase=A;scale=1;$Pact/A" | bc)
+
+        # Fac(Hz)
+        Fact=$(hexdump -C -s $(calcpos 41) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Fac=$(echo "ibase=16;obase=A;scale=2;$Fact/64" | bc)
+
+        # Vac1(V)
+        Vac1t=$(hexdump -C -s $(calcpos 43) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vac1=$(echo "ibase=16;obase=A;scale=1;$Vac1t/A" | bc)
+
+        # Iac1(A)
+        Iac1t=$(hexdump -C -s $(calcpos 45) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Iac1=$(echo "ibase=16;obase=A;scale=1;$Iac1t/A" | bc)
+
+        # Pac1(W)
+        Pac1t=$(hexdump -C -s $(calcpos 47) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Pac1=$(echo "ibase=16;obase=A;scale=1;$Pac1t/A" | bc)
+
+        # Vac2(V)
+        Vac2t=$(hexdump -C -s $(calcpos 51) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vac2=$(echo "ibase=16;obase=A;scale=1;$Vac2t/A" | bc)
+
+        # Iac2(A)
+        Iac2t=$(hexdump -C -s $(calcpos 53) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Iac2=$(echo "ibase=16;obase=A;scale=1;$Iac2t/A" | bc)
+
+        # Pac2(W)
+        Pac2t=$(hexdump -C -s $(calcpos 55) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Pac2=$(echo "ibase=16;obase=A;scale=1;$Pac2t/A" | bc)
+
+        # Vac3(V)
+        Vac3t=$(hexdump -C -s $(calcpos 59) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vac3=$(echo "ibase=16;obase=A;scale=1;$Vac3t/A" | bc)
+
+        # Iac3(A)
+        Iac3t=$(hexdump -C -s $(calcpos 61) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Iac3=$(echo "ibase=16;obase=A;scale=1;$Iac3t/A" | bc)
+
+        # Pac3(W)
+        Pac3t=$(hexdump -C -s $(calcpos 63) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Pac3=$(echo "ibase=16;obase=A;scale=1;$Pac3t/A" | bc)
+
+        # E_Today(kWh)  - pvoutput -> Energy
+        Etodayt=$(hexdump -C -s $(calcpos 67) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Etoday=$(echo "ibase=16;obase=A;scale=2;$Etodayt*64" | bc)
+        Etodayk=$(echo "ibase=16;obase=A;scale=2;$Etodayt/A" | bc)
+
+        # E_Total (Wh)
+        Eallt=$(hexdump -C -s $(calcpos 71) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Eall=$(echo "ibase=16;obase=A;scale=1;$Eallt/A" | bc)
+
+        # Tall (s) / TallH (h)
+        Tallt=$(hexdump -C -s $(calcpos 75) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Tall=$(echo "ibase=16;obase=A;scale=2;$Tallt" | bc)
+        TallH=$(echo "$Tall/(60*60*2)" | bc)
+
+        # Tmp(C)
+        Tmpt=$(hexdump -C -s $(calcpos 79) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Tmp=$(echo "ibase=16;obase=A;scale=1;$Tmpt/A" | bc)
+
+        # ISO Fault (V)
+        ISOFt=$(hexdump -C -s $(calcpos 81) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        ISOF=$(echo "ibase=16;obase=A;scale=1;$ISOFt/A" | bc)
+
+        # GFCI Fault (mA)
+        GFCIFt=$(hexdump -C -s $(calcpos 83) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        GFCIF=$(echo "ibase=16;obase=A;scale=2;$GFCIFt/A" | bc)
+
+        # DCI Fault (A)
+        DCIFt=$(hexdump -C -s $(calcpos 85) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        DCIF=$(echo "ibase=16;obase=A;scale=2;$DCIFt/A" | bc)
+
+        # Vpvfault(V)
+        Vpvfaultt=$(hexdump -C -s $(calcpos 87) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vpvfault=$(echo "ibase=16;obase=A;scale=1;$Vpvfaultt/A" | bc)
+
+        # Vacfault(V)
+        Vacfaultt=$(hexdump -C -s $(calcpos 89) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Vacfault=$(echo "ibase=16;obase=A;scale=1;$Vacfaultt/A" | bc)
+
+        # Facfault(Hz)
+        Facfaultt=$(hexdump -C -s $(calcpos 91) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Facfault=$(echo "ibase=16;obase=A;scale=2;$Facfaultt/64" | bc)
+
+        # Tmpfault(C)
+        Tmpfaultt=$(hexdump -C -s $(calcpos 93) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Tmpfault=$(echo "ibase=16;obase=A;scale=1;$Tmpfaultt/A" | bc)
+
+        # Faultcode(bits)
+        Faultcodet=$(hexdump -C -s $(calcpos 95) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Faultcode=$(echo "ibase=16;obase=2;$Faultcodet" | bc)
+
+        # IPMtemp(C)
+        IPMtempt=$(hexdump -C -s $(calcpos 97) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        IPMtemp=$(echo "ibase=16;obase=A;scale=1;$IPMtempt/A" | bc)
+
+        # Pbusvolt(V)
+        Pbusvoltt=$(hexdump -C -s $(calcpos 99) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Pbusvolt=$(echo "ibase=16;obase=A;scale=1;$Pbusvoltt/A" | bc)
+
+        # Nbusvolt(V)
+        Nbusvoltt=$(hexdump -C -s $(calcpos 101) -n 2 $fn | cut -c11-15 | tr a-f A-F | sed "s/ //g")
+        Nbusvolt=$(echo "ibase=16;obase=A;scale=1;$Nbusvoltt/A" | bc)
+
+        # Check step      - 103
+
+        # IPF             - 105
+
+        # RestCHK         - 107
+
+        # DeratingMode    - 109
+
+        # ?               - 111
+
+        # ?               - 113
+
+        # Epv1today (kWh)
+        Epv1todayt=$(hexdump -C -s $(calcpos 115) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Epv1today=$(echo "ibase=16;obase=A;scale=2;$Epv1todayt/A" | bc)
+
+        # Epv1total (kWh)
+        Epv1totalt=$(hexdump -C -s $(calcpos 119) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Epv1total=$(echo "ibase=16;obase=A;scale=2;$Epv1totalt/A" | bc)
+
+        # Epv2today (kWh)
+        Epv2todayt=$(hexdump -C -s $(calcpos 123) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Epv2today=$(echo "ibase=16;obase=A;scale=2;$Epv2todayt/A" | bc)
+
+        # Epv2total (kWh)
+        Epv2totalt=$(hexdump -C -s $(calcpos 127) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Epv2total=$(echo "ibase=16;obase=A;scale=2;$Epv2totalt/A" | bc)
+
+        # Epvtotal (kWh)
+        Epvtotalt=$(hexdump -C -s $(calcpos 131) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Epvtotal=$(echo "ibase=16;obase=A;scale=2;$Epvtotalt/A" | bc)
+
+        # Rac (Var)
+        Ract=$(hexdump -C -s $(calcpos 135) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        Rac=$(echo "ibase=16;obase=A;scale=2;$Ract*64" | bc)
+
+        # E_Rac_today (Var)
+        ERactodayt=$(hexdump -C -s $(calcpos 139) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        ERactoday=$(echo "ibase=16;obase=A;scale=2;$ERactodayt*64" | bc)
+
+        # E_Rac_total (Var)
+        ERactotalt=$(hexdump -C -s $(calcpos 143) -n 4 $fn | cut -c11-21 | tr a-f A-F | sed "s/ //g")
+        ERactotal=$(echo "ibase=16;obase=A;scale=2;$ERactotalt*64" | bc)
+
+        #-------------------------------------------------------------------------
+        # Write the details per record to the logfile
+        #-------------------------------------------------------------------------
+        printf "Growatt Inverter serial    (%s)"    $cs  
+        printf "                  Capture sample date : %s\n" $fd  
+        printf "Growatt Wifi Module serial (%s)"    $ah  
+        printf "                  Capture sample time : %s\n" $ft  
+        printf "Growatt Inverter status:    %s (%d)" $InvStattxt   $InvStat
+        printf "                   Growatt temperature %6.1f C\n"  $Tmp
+	printf "%87s\n" | tr ' ' -
+
+        printf "%-11s %8.1f %-10s"      "E_Today"    $Etodayk "kWh"
+        printf "%-11s %8.1f %-10s"      "E_Total"    $Eall    "kWh"
+        printf "%-11s %8.1f %-10s\n"    "Total time" $TallH   "hrs"
+	printf "%87s\n" | tr ' ' -
+
+        printf "%-11s %8.1f %-10s"      "Ppv" $Ppv " W"
+        printf "%-11s %8.1f %-10s"      "Pac" $Pac " W"
+        printf "%-11s %8.2f %-10s\n"    "Fac" $Fac "Hz"
+	printf "%87s\n" | tr ' ' -
+
+        printf "%-11s %8.1f %-10s"      "Vpv1" $Vpv1 " V"
+        printf "%-11s %8.1f %-10s\n"    "Vpv2" $Vpv2 " V"
+        printf "%-11s %8.1f %-10s"      "Ipv1" $Ipv1 " A"
+        printf "%-11s %8.1f %-10s\n"    "Ipv2" $Ipv2 " A"
+        printf "%-11s %8.1f %-10s"      "Ppv1" $Ppv1 " W"
+        printf "%-11s %8.1f %-10s\n"    "Ppv2" $Ppv2 " W"
+	printf "%87s\n" | tr ' ' -
+
+        printf "%-11s %8.1f %-10s"      "Vac1" $Vac1 " V"
+        printf "%-11s %8.1f %-10s"      "Vac2" $Vac2 " V"
+        printf "%-11s %8.1f %-10s\n"    "Vac3" $Vac3 " V"
+        printf "%-11s %8.1f %-10s"      "Iac1" $Iac1 " A"
+        printf "%-11s %8.1f %-10s"      "Iac2" $Iac2 " A"
+        printf "%-11s %8.1f %-10s\n"    "Iac2" $Iac3 " A"
+        printf "%-11s %8.1f %-10s"      "Pac1" $Pac1 " W"
+        printf "%-11s %8.1f %-10s"      "Pac2" $Pac2 " W"
+        printf "%-11s %8.1f %-10s\n"    "Pac2" $Pac3 " W"
+	printf "%87s\n" | tr ' ' -
+
+	printf "%-11s %8.1f %-10s\n"    "Epvtotal"  $Epvtotal  "kW"
+	printf "%-11s %8.1f %-10s"      "Epv1today" $Epv1today "kW"
+	printf "%-11s %8.1f %-10s\n"    "Epv2today" $Epv2today "kW"
+	printf "%-11s %8.1f %-10s"      "Epv1total" $Epv1total "kW"
+	printf "%-11s %8.1f %-10s\n"    "Epv2total" $Epv2total "kW"
+	printf "%87s\n" | tr ' ' -
+
+	printf "%-11s %8.1f %-10s"      "ISO Fault"  $ISOF      " V"
+	printf "%-11s %8.1f %-10s"      "Vpvfault"   $Vpvfault  " V"
+	printf "%-11s %8.1f %-10s\n"    "Tempfault"  $Tmpfault  " C"
+	printf "%-11s %8.1f %-10s"      "GFCI Fault" $GFCIF     "mA"
+	printf "%-11s %8.1f %-10s"      "Vacfault"   $Vacfault  " V"
+	printf "%-11s %11s\n"           "Faultcode"  $Faultcode 
+	printf "%-11s %8.1f %-10s"      "DCI Fault"  $DCIF      " A"
+	printf "%-11s %8.2f %-10s\n"    "Facfault"   $Facfault  "Hz"
+	printf "%87s\n" | tr ' ' -
+
+	printf "%-11s %8.1f %-10s"      "IPMtemp"     $IPMtemp     " C"
+	printf "%-11s %8.1f %-10s\n"    "Rac"         $Rac         "Var"
+	printf "%-11s %8.1f %-10s"      "Pbusvolt"    $Pbusvolt    " V"
+	printf "%-11s %8.1f %-10s\n"    "E_Rac_today" $ERactoday   "Var"
+	printf "%-11s %8.1f %-10s"      "Nbusvolt"    $Nbusvolt    " V"
+	printf "%-11s %8.1f %-10s\n"    "E_Rac_total" $ERactotal   "Var"
+	printf "%87s\n" | tr ' ' -
+
+else
+	#-------------------------------------------------------------------------
+	# Write error message if the file is of an incorrect length
+	#-------------------------------------------------------------------------
+	printf "\nERROR: The file does not have the expected length...\n\n"
+	printf "The length needs to be between %s and %s characters,\n" $LOWERLIMIT $UPPERLIMIT
+        printf "but is currently %s characters.\n\n" $fs
+fi
