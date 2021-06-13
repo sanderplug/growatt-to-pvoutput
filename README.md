@@ -1,4 +1,4 @@
-# Upload Growatt inverter data to PVouput via Raspberry Pi
+# Growatt inverter data to PVouput via Raspberry Pi
 When starting with solar panels in 2013, I have searched for a workable solution to upload the production data from my Growatt 3600MTL (dual tracker) inverter to PVoutput. Up till then, most solutions documented on the internet were around the Growatt Bluetooth adapter. Or it involved a USB to RS232 serial cable in combination with a Raspberry Pi closely placed to the Growatt inverter.
 
 After finding starting points, I wrote the required code to be able to correctly capture the data for my inverter and perform the required error checking. I completely documented the code as well as the setup on a Raspberry Pi and published this on Vereniging Eigenhuis Energy Community webpages. That blog post had accumulated over 22k views and over 500 comments, until the whole community was discarded off unexpectedly.
