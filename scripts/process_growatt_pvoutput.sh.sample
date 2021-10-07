@@ -150,6 +150,9 @@ calcpos()
 	"3.0.0.0")
 		OFFSETCORRECT=6
 	;;
+	"4.0.0.0")
+		OFFSETCORRECT=16
+	;;
 	esac
 
 	echo $(echo $OFFSET + $1 + $OFFSETCORRECT | bc)
